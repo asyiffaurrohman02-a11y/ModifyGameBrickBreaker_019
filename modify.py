@@ -166,3 +166,132 @@ class Paddle:
         pygame.draw.circle(surface, YELLOW, (r.centerx, r.top + 8), 3)
 
 
+class Ball:
+    def __init__(self, x, y, vx=None, vy=-6.0):
+        self.x, self.y = float(x), float(y)
+        self.radius = 9
+        self.vx = random.choice((-4.5, 4.5)) if vx is None else vx
+        self.vy = vy
+        self.trail = []
+        self.stuck = True
+
+    def rect(self):
+        return pygame.Rect(int(self.x - self.radius), int(self.y - self.radius),
+                           self.radius * 2, self.radius * 2)
+
+    def launch(self):
+        if self.stuck:
+            self.stuck = False
+            self.vx = random.choice((-4.8, 4.8))
+            self.vy = -6.0
+
+    def update(self, paddle, bricks, particles, labels, game):
+        if self.stuck:
+            self.x = paddle.rect.centerx
+            self.y = paddle.rect.top - self.radius - 2
+            return True
+
+        self.trail.append((int(self.x), int(self.y)))
+        if len(self.trail) > 9:
+            self.trail.pop(0)
+
+        old = self.rect()
+        self.x += self.vx
+        self.y += self.vy
+
+        if self.x <= self.radius + 8:
+            self.x = self.radius + 8
+            self.vx = abs(self.vx)
+            play_tone(260, 35, 0.05)
+        elif self.x >= WIDTH - self.radius - 8:
+            self.x = WIDTH - self.radius - 8
+            self.vx = -abs(self.vx)
+            play_tone(260, 35, 0.05)
+
+        if self.y <= PLAY_TOP + self.radius:
+            self.y = PLAY_TOP + self.radius
+            self.vy = abs(self.vy)
+
+        current = self.rect()
+        if current.colliderect(paddle.rect) and self.vy > 0:
+            self.y = paddle.rect.top - self.radius
+            offset = (self.x - paddle.rect.centerx) / (paddle.rect.width / 2)
+            self.vx = max(-7.5, min(7.5, offset * 7.0))
+            if abs(self.vx) < 1.2:
+                self.vx = 1.2 if self.vx >= 0 else -1.2
+            self.vy = -max(5.8, min(8.5, math.hypot(self.vx, self.vy)))
+            game.combo = 0
+            game.shake = max(game.shake, 2)
+            for _ in range(7):
+                particles.append(Particle(self.x, self.y, CYAN, 3))
+            play_tone(650, 55)
+
+        # One brick collision per frame prevents multiple score hits.
+        for brick in bricks[:]:
+            if self.rect().colliderect(brick.rect):
+                if old.bottom <= brick.rect.top + 5 or old.top >= brick.rect.bottom - 5:
+                    self.vy *= -1
+                else:
+                    self.vx *= -1
+                brick.hp -= 1
+                game.combo += 1
+                game.score += 10 * max(1, game.combo)
+                game.shake = max(game.shake, 4)
+                labels.append(FloatingLabel(brick.rect.centerx, brick.rect.y,
+                                            f"+{10 * max(1, game.combo)}", YELLOW))
+                for _ in range(13):
+                    particles.append(Particle(brick.rect.centerx,
+                                              brick.rect.centery, brick.color, 4))
+                play_tone(420 + min(game.combo, 8) * 45, 55)
+                if brick.hp <= 0:
+                    bricks.remove(brick)
+                    game.maybe_drop_powerup(brick.rect.center)
+                else:
+                    brick.color = YELLOW
+                break
+
+        return self.y < HEIGHT + 30
+
+    def draw(self, surface):
+        for i, point in enumerate(self.trail):
+            radius = max(2, int(self.radius * (i + 1) / len(self.trail) * 0.65))
+            pygame.draw.circle(surface, (35 + i * 5, 100 + i * 7, 145 + i * 8),
+                               point, radius)
+        cx, cy = int(self.x), int(self.y)
+        pygame.draw.circle(surface, (35, 105, 120), (cx, cy), 17)
+        diamond = [(cx, cy - 11), (cx + 9, cy), (cx, cy + 11), (cx - 9, cy)]
+        pygame.draw.polygon(surface, YELLOW, diamond)
+        pygame.draw.polygon(surface, WHITE, diamond, 2)
+        pygame.draw.circle(surface, WHITE, (cx - 2, cy - 3), 3)
+
+
+class Brick:
+    def __init__(self, rect, color, hp=1):
+        self.rect = rect
+        self.color = color
+        self.hp = hp
+        self.max_hp = hp
+
+    def draw(self, surface):
+        color = self.color if self.hp == 1 else YELLOW
+        r = self.rect
+        points = [
+            (r.left + 8, r.top), (r.right - 8, r.top),
+            (r.right, r.centery), (r.right - 8, r.bottom),
+            (r.left + 8, r.bottom), (r.left, r.centery)
+        ]
+        glow = pygame.Surface((r.width + 24, r.height + 24), pygame.SRCALPHA)
+        shifted = [(x - r.left + 12, y - r.top + 12) for x, y in points]
+        pygame.draw.polygon(glow, (*color, 42), shifted)
+        surface.blit(glow, (r.x - 12, r.y - 12))
+        pygame.draw.polygon(surface, color, points)
+        pygame.draw.polygon(surface, WHITE, points, 1)
+        pygame.draw.line(surface, (255, 255, 255),
+                         (r.left + 12, r.top + 4),
+                         (r.right - 12, r.top + 4), 1)
+        if self.max_hp > 1:
+            for i in range(self.hp):
+                pygame.draw.circle(surface, BG,
+                                   (r.centerx - 5 + i * 10, r.centery), 2)
+
+
